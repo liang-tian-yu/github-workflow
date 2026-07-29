@@ -1,0 +1,77 @@
+name: build clash rules
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/README.md"
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compare latest tags and set variables
+        run: |
+          upstreamLatestTag=$(curl -sSL --connect-timeout 5 --retry 5 -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/v2fly/domain-list-community/releases/latest | grep "tag_name" | cut -d\" -f4)
+          thisLatestTag=$(curl -sSL --connect-timeout 5 --retry 5 -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${{ github.repository }}/releases/latest | grep "tag_name" | cut -d\" -f4)
+          if [[ $upstreamLatestTag != $thisLatestTag ]]; then
+            echo "NeedToSync=true" >> $GITHUB_ENV
+          fi
+          echo "RELEASE_NAME=$upstreamLatestTag" >> $GITHUB_ENV
+          echo "TAG_NAME=$upstreamLatestTag" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Checkout codebase
+        uses: actions/checkout@v7
+        if: ${{ env.NeedToSync }}
+
+      - name: Download dlc.dat from upstream
+        if: ${{ env.NeedToSync }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download \
+            --repo v2fly/domain-list-community \
+            --pattern "dlc.dat" || exit 1
+
+      - name: Checkout MetaCubeX/meta-rules-converter
+        if: ${{ env.NeedToSync }}
+        uses: actions/checkout@v7
+        with:
+          repository: MetaCubeX/meta-rules-converter
+          path: meta-rules-converter
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        if: ${{ env.NeedToSync }}
+        with:
+          go-version-file: ./meta-rules-converter/go.mod
+
+      - name: Build meta rules converter
+        if: ${{ env.NeedToSync }}
+        run: |
+          cd meta-rules-converter || exit 1
+          go build -o ../converter .
+
+      - name: Generate clash rules
+        if: ${{ env.NeedToSync }}
+        run: |
+          mkdir publish
+          ./converter geosite -f "dlc.dat" -o ./publish
+
+      - name: Git push assets to "release" branch
+        if: ${{ env.NeedToSync }}
+        run: |
+          cd publish || exit 1
+          git init
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b release
+          git add .
+          git commit -m "${{ env.RELEASE_NAME }}"
+          git remote add publish "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+          git push -f publish release
