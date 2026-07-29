@@ -66,8 +66,8 @@ jobs:
       - name: Generate clash rules
         if: ${{ env.NeedToSync }}
         run: |
-          mkdir publish
-          ./converter geosite -f "dlc.dat" -o ./publish
+          mkdir -p publish/clash-rules/geosite
+          ./converter geosite -f "dlc.dat" -o ./publish/clash-rules/geosite
 
       - name: Git push assets to "release" branch
         if: ${{ env.NeedToSync }}
